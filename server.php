@@ -1,43 +1,68 @@
 <?php
 class Websocket {
     public $server;
-    public function __construct() {
+
+    public $table;
+
+    public $set =[
+    ];
+
+    public function __construct($ip='0.0.0.0', $prot=10006) {
         //实例化websocket服务
-        $this->server = new Swoole\WebSocket\Server("0.0.0.0", 10006);
+        $this->server = new Swoole\WebSocket\Server($ip, $prot);
 
         //实例化内存表
-        $table = new swoole_table(1024);
+        $this->table = new swoole_table(1024);
 
         //设置表字段 （字段名：string ， 字段类型：int、float、string ， 长度：int）
-        $table->column('id',$table::TYPE_INT,4);
-        $table->column('fd',$table::TYPE_INT,4);
-        $table->column('uid',$table::TYPE_STRING,32);
-
+        $this->table->column('id',$this->table::TYPE_INT,4);
+        $this->table->column('fd',$this->table::TYPE_INT,4);
+        $this->table->column('uid',$this->table::TYPE_STRING,32);
         //创建表
-        $table->create();
+        $this->table->create();
 
-        $this->server->on('open', function (swoole_websocket_server $server, $request) use ($table) {
-            $uid = $request->get['uid'];
+        $this->server->on('open', [$this, 'open']);
+        $this->server->on('message', [$this, 'message']);
+        $this->server->on('close', [$this, 'close']);
+    }
 
-            $table->incr($uid, 'id');
-            $table->set($uid, ['fd'=>$request->fd, 'uid'=>$uid]);
-            echo "open[{$request->fd}]\n";
-        });
-        $this->server->on('message', function (Swoole\WebSocket\Server $server, $frame) use ($table) {
-
-            $data = json_decode($frame->data,true);
-            if($table->exist($data['uid'])){
-                $uid_data = $table->get($data['uid']);
-                if ($this->server->isEstablished($uid_data['fd'])) {
-                    var_dump($data['msg']);
-                    $this->server->push($uid_data['fd'], $data['msg']);
-                }
+    public function open(swoole_websocket_server $server, swoole_http_request $request)
+    {
+        $uid = $request->get['uid'];
+        if($this->table->exist($uid)){
+            $uid_data = $this->table->get($uid);
+            if ($this->server->isEstablished($uid_data['fd'])) {
+                $this->server->disconnect($uid_data['fd'], 1000, '账号在其他地方登录');
             }
-        });
-        $this->server->on('close', function ($server, $fd) {
-            echo "close[{$fd}]\n";
-        });
+        }
+
+        $this->table->incr($uid, 'id');
+        $this->table->set($uid, ['fd'=>$request->fd, 'uid'=>$uid]);
+    }
+
+    public function message(swoole_websocket_server  $server, swoole_websocket_frame $frame)
+    {
+        $data = json_decode($frame->data,true);
+        if($this->table->exist($data['uid'])){
+            $uid_data = $this->table->get($data['uid']);
+            if ($this->server->isEstablished($uid_data['fd'])) {
+                $this->server->push($uid_data['fd'], $data['msg']);
+            }
+        }
+
+    }
+
+    public function start()
+    {
+        echo "start\r\n";
         $this->server->start();
     }
+
+    public function close($fd)
+    {
+        echo "close\r\n";
+    }
 }
-new Websocket();
+
+$Websocket = new Websocket();
+$Websocket->start();
